@@ -1,6 +1,6 @@
 async function copyScript() {
     try {
-        var scriptText = await (await fetch("/script.js")).text();
+        var scriptText = await (await fetch("MSET9-ChromeOS.js")).text();
         copy(scriptText);
         clearTimeout(successAlertTimeout);
         document.getElementById("copied").style.display = "block";
