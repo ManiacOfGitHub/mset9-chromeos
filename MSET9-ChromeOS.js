@@ -556,10 +556,11 @@ async function checkSD() {
     var filesMissing = 0;
     for(var i of ["boot9strap/boot9strap.firm", "boot9strap/boot9strap.firm.sha", "boot.firm", "boot.3dsx", "b9", "SafeB9S.bin"]) {
         var result = await checkFile(sdRootEntry, i);
+        var filePath = i.split("/");
         if(result) {
-            prgood(i.split("/").at(-1) + " looks good!");
+            prgood(filePath[filePath.length - 1] + " looks good!");
         } else {
-            prbad(i.split("/").at(-1) + " does not exist on SD card!");
+            prbad(filePath[filePath.length - 1] + " does not exist on SD card!");
             filesMissing+=1;
         }
     }
@@ -591,21 +592,36 @@ async function checkApp() {
         }
         return false;
     }
-    if(!inFilesApp && (!window.localStorage || !localStorage.getItem || localStorage.getItem("allowUnknownApp")!='true')) {
-        prbad("Error 01C: Script is running in an unknown app, but the fileManagerPrivate API is exposed.");
-        prinfo("This likely means that ChromeOS is not up-to-date.");
-        prinfo("To ensure the most compatibility, please update your Chromebook in the Settings app under the \"About ChromeOS\" section.");
-        prinfo("If you are unable to update to the latest version (perhaps your device has gone out of support), you can attempt to continue running this script regardless, although you may encounter some issues.");
-        prinfo("");
-        prinfo("Please read the above info. If you wish to continue regardless, please type \"i.understand\" and press Enter.");
-        await new Promise(resolve=>{
-            i = {
-                get understand() {
-                    if(window.localStorage && localStorage.setItem) localStorage.setItem("allowUnknownApp",'true');
-                    resolve();
-                }
-            };
-        });
+    if(!inFilesApp) {
+        var showPrompt = true;
+        if(chrome.storage && chrome.storage.local && chrome.storage.local.get) {
+            var data = (await new Promise(resolve=>chrome.storage.local.get(resolve))).allowUnknownApp;
+            if(data=="true") {
+                showPrompt = false;
+            }
+        } else if(window.localStorage && localStorage.getItem && localStorage.getItem("allowUnknownApp")=='true') {
+            showPrompt = false;
+        }
+        if(showPrompt) {
+            prbad("Error 01C: Script is running in an unknown app, but the fileManagerPrivate API is exposed.");
+            prinfo("This likely means that ChromeOS is not up-to-date.");
+            prinfo("To ensure the most compatibility, please update your Chromebook in the Settings app under the \"About ChromeOS\" section.");
+            prinfo("If you are unable to update to the latest version (perhaps your device has gone out of support), you can attempt to continue running this script regardless, although you may encounter some issues.");
+            prinfo("");
+            prinfo("Please read the above info. If you wish to continue regardless, please type \"i.understand\" and press Enter.");
+            await new Promise(resolve=>{
+                i = {
+                    get understand() {
+                        if(chrome.storage && chrome.storage.local && chrome.storage.local.set) {
+                            chrome.storage.local.set({allowUnknownApp:"true"});
+                        } else if(window.localStorage && localStorage.setItem) {
+                            localStorage.setItem("allowUnknownApp",'true');
+                        }
+                        resolve();
+                    }
+                };
+            });
+        }
     }
     if(inFilesApp) {
         prgood("Script is running in the ChromeOS Files app.");
@@ -646,10 +662,22 @@ async function searchForRoot() {
     var validVolumeRoot;
     for(var volume of volumeList) {
         prinfo("Testing volume \""+volume.volumeId+"\"");
-        var volumeRoot = await new Promise(r=>chrome.fileManagerPrivate.getVolumeRoot({volumeId:volume.volumeId},r));
-        if(!volumeRoot) {
-            prinfo("Unable to get volume root.");
-            continue;
+        if(chrome.fileManagerPrivate.getVolumeRoot) {
+            var volumeRoot = await new Promise(r=>chrome.fileManagerPrivate.getVolumeRoot({volumeId:volume.volumeId},r));
+            if(!volumeRoot) {
+                prinfo("Unable to get volume root.");
+                continue;
+            }
+        } else if(chrome.fileSystem.requestFileSystem) {
+            prinfo("chrome.fileManagerPrivate.getVolumeRoot does not exist. Attempting to use chrome.fileSystem.requestFileSystem API instead...");
+            var volumeRoot = (await new Promise(r=>chrome.fileSystem.requestFileSystem({volumeId:volume.volumeId,writable:true},r))).root;
+            if(!volumeRoot) {
+                prinfo("Unable to get volume root.");
+                return;
+            }
+        } else {
+            prinfo("No method exists to obtain volume root.");
+            return;
         }
         var result = await new Promise(resolve=>{volumeRoot.getDirectory("Nintendo 3DS", {}, ()=>{resolve({success:true})},err=>{resolve({success:false,errMessage:err.message,errName:err.name})})});
         if(!result || !result.success) {
@@ -701,9 +729,21 @@ async function searchCurrentLocationForRoot() {
         prinfo("Current location is not on SD card. Volume ID: " + volumeInfo.volumeId + ".");
         return;
     }
-    var volume = await new Promise(r=>chrome.fileManagerPrivate.getVolumeRoot({volumeId:volumeInfo.volumeId},r));
-    if(!volume) {
-        prinfo("Unable to get current volume root.");
+    if(chrome.fileManagerPrivate.getVolumeRoot) {
+        var volume = await new Promise(r=>chrome.fileManagerPrivate.getVolumeRoot({volumeId:volumeInfo.volumeId},r));
+        if(!volume) {
+            prinfo("Unable to get current volume root.");
+            return;
+        }
+    } else if(chrome.fileSystem.requestFileSystem) {
+        prinfo("chrome.fileManagerPrivate.getVolumeRoot does not exist. Attempting to use chrome.fileSystem.requestFileSystem API instead...");
+        var volume = (await new Promise(r=>chrome.fileSystem.requestFileSystem({volumeId:volumeInfo.volumeId,writable:true},r))).root;
+        if(!volume) {
+            prinfo("Unable to get current volume root.");
+            return;
+        }
+    } else {
+        prinfo("No method exists to obtain volume root.");
         return;
     }
     var result = await new Promise(resolve=>{volume.getDirectory("Nintendo 3DS", {}, ()=>{resolve({success:true})},err=>{resolve({success:false,errMessage:err.message,errName:err.name})})});
@@ -731,8 +771,9 @@ async function checkFile(dirEntry, path) {
 }
 
 async function ejectSD() {
-    if(!volumeId) {
-        prbad("This script must be run at least once in this session in order to eject the SD card.");
+    if(!window.volumeId) {
+        prbad("This script must be run with no errors at least once in this session in order to eject the SD card.");
+        return;
     }
     var volumeList = await new Promise(resolve=>{chrome.fileManagerPrivate.getVolumeMetadataList(resolve)});
     if(!volumeList.find(o=>o.volumeId==volumeId)) {
@@ -740,7 +781,14 @@ async function ejectSD() {
         return;
     }
     prinfo("Attempting to eject SD card... Please wait.");
-    chrome.fileManagerPrivate.removeMount(volumeId,()=>{prgood("Assuming no errors appear below, the SD card was successfully ejected!")});
+    try {
+        chrome.fileManagerPrivate.removeMount(volumeId,()=>{prgood("Assuming no errors appear below, the SD card was successfully ejected!")});
+    } catch(err) {
+        prinfo("Normal eject method failed (likely old app)... Please wait 5 seconds.");
+        chrome.fileManagerPrivate.removeMount(volumeId);
+        await new Promise(resolve=>setTimeout(resolve,5000));
+        prgood("Assuming no errors appear below, the SD card was successfully ejected!")
+    }
 }
 
 function err01() {
@@ -765,7 +813,7 @@ function prinfo(content) {
 
 function resetLog() {
     console.clear();
-    console.log("%cMSET9-ChromeOS%c\nVersion 1.0-beta by ManiacOfHomebrew\nOriginal script by zoogie, Aven, DannyAAM, and thepikachugamer","font-size:40px;font-family:Roboto;color:red;text-shadow: 1px 1px blue;","");
+    console.log("%cMSET9-ChromeOS%c\nVersion 1.1-beta by ManiacOfHomebrew\nOriginal script by zoogie, Aven, DannyAAM, and thepikachugamer","font-size:40px;font-family:Roboto;color:red;text-shadow: 1px 1px blue;","");
 }
 
 var commands = {};
