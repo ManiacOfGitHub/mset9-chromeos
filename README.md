@@ -1,6 +1,6 @@
 # MSET9-ChromeOS
-MSET9 v2.0 for ChromeOS (without Android!)
+MSET9 Fresh Edition for ChromeOS (without Android!)
 
-Wanna try it? [View the guide here!](https://wiki.hacks.guide/wiki/User:ManiacOfHomebrew/sandbox)
+Wanna try it? [View the guide here!](https://wiki.hacks.guide/wiki/3DS:Alternate_Exploits/Installing_boot9strap_(MSET9-ChromeOS))
 
-Docs are coming soon™!
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/I2I2X8BP1)
